@@ -1,0 +1,841 @@
+import React, { useMemo, useState } from "react";
+import {
+  AreaChart,
+  Area,
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  Legend,
+  ResponsiveContainer,
+} from "recharts";
+import { TrendingUp, Wallet, PiggyBank, Landmark, ArrowRightLeft, Info } from "lucide-react";
+
+/* ---------------------------------------------------------------
+   THE LEDGER — a retirement corpus calculator styled like an old
+   bank passbook: ink-navy covers, parchment statement pages,
+   brass foil numerals, and three "jars" standing in for the
+   liquid / balanced / growth buckets of a retirement portfolio.
+------------------------------------------------------------------*/
+
+const C = {
+  ink: "#0F1A2B",
+  ink2: "#16233A",
+  inkLine: "#2A3A54",
+  parchment: "#F4EFE2",
+  parchment2: "#ECE4D2",
+  parchmentLine: "#D8CCAE",
+  brass: "#BD8A3D",
+  brassLight: "#E3BD7C",
+  ink3: "#1C2C46",
+  textInk: "#1C2233",
+  textMuted: "#7E8CA6",
+  teal: "#2F6F62",
+  tealLight: "#6FA895",
+  rust: "#B24B3D",
+  rustLight: "#D98A78",
+  slate: "#4C6B8A",
+  slateLight: "#93AECB",
+};
+
+const fontImport = `
+@import url('https://fonts.googleapis.com/css2?family=Fraunces:opsz,wght@9..144,400;9..144,500;9..144,600;9..144,700&family=Inter:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap');
+`;
+
+const inr = (n, opts = {}) => {
+  if (!isFinite(n)) return "—";
+  return new Intl.NumberFormat("en-IN", {
+    style: "currency",
+    currency: "INR",
+    maximumFractionDigits: opts.decimals ?? 0,
+    minimumFractionDigits: opts.decimals ?? 0,
+  }).format(n);
+};
+
+const shortInr = (n) => {
+  if (!isFinite(n)) return "—";
+  const abs = Math.abs(n);
+  if (abs >= 1e7) return `₹${(n / 1e7).toFixed(2)} Cr`;
+  if (abs >= 1e5) return `₹${(n / 1e5).toFixed(2)} L`;
+  if (abs >= 1e3) return `₹${(n / 1e3).toFixed(1)} K`;
+  return `₹${n.toFixed(0)}`;
+};
+
+function NumberField({ label, value, onChange, suffix, step = 1, min = 0, hint }) {
+  return (
+    <label className="flex flex-col gap-1">
+      <span
+        className="text-xs tracking-wide uppercase flex items-center gap-1"
+        style={{ color: C.textMuted, fontFamily: "Inter, sans-serif", letterSpacing: "0.06em" }}
+      >
+        {label}
+      </span>
+      <div
+        className="flex items-center rounded-md overflow-hidden border"
+        style={{ borderColor: C.parchmentLine, background: "#fff" }}
+      >
+        <input
+          type="number"
+          value={value}
+          step={step}
+          min={min}
+          onChange={(e) => onChange(e.target.value === "" ? 0 : parseFloat(e.target.value))}
+          className="w-full px-3 py-2 outline-none bg-transparent"
+          style={{
+            fontFamily: "IBM Plex Mono, monospace",
+            color: C.textInk,
+            fontSize: "15px",
+          }}
+        />
+        {suffix && (
+          <span
+            className="px-3 text-sm"
+            style={{ color: C.textMuted, fontFamily: "Inter, sans-serif", borderLeft: `1px solid ${C.parchmentLine}` }}
+          >
+            {suffix}
+          </span>
+        )}
+      </div>
+      {hint && (
+        <span style={{ color: C.textMuted, fontSize: "11px", fontFamily: "Inter, sans-serif" }}>{hint}</span>
+      )}
+    </label>
+  );
+}
+
+function SectionLabel({ n, title }) {
+  return (
+    <div className="flex items-baseline gap-3 mb-4">
+      <span
+        style={{
+          fontFamily: "Fraunces, serif",
+          color: C.brass,
+          fontSize: "13px",
+          letterSpacing: "0.1em",
+        }}
+      >
+        {n}
+      </span>
+      <h3
+        style={{ fontFamily: "Fraunces, serif", color: C.textInk, fontSize: "18px", fontWeight: 600 }}
+      >
+        {title}
+      </h3>
+      <div className="flex-1" style={{ borderBottom: `1px solid ${C.parchmentLine}` }} />
+    </div>
+  );
+}
+
+// Glass jar visual for a bucket
+function Jar({ label, sub, amount, pct, color, colorLight, icon: Icon }) {
+  const height = 150;
+  const width = 96;
+  const fillH = Math.max(4, (Math.min(100, pct) / 100) * (height - 18));
+  const fillY = height - 10 - fillH;
+  return (
+    <div className="flex flex-col items-center gap-3">
+      <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+        <defs>
+          <linearGradient id={`grad-${label}`} x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0%" stopColor={colorLight} />
+            <stop offset="100%" stopColor={color} />
+          </linearGradient>
+          <clipPath id={`clip-${label}`}>
+            <rect x="6" y="8" width={width - 12} height={height - 16} rx="10" />
+          </clipPath>
+        </defs>
+        {/* jar outline */}
+        <rect
+          x="6"
+          y="8"
+          width={width - 12}
+          height={height - 16}
+          rx="10"
+          fill="rgba(255,255,255,0.5)"
+          stroke={C.parchmentLine}
+          strokeWidth="2"
+        />
+        {/* liquid */}
+        <g clipPath={`url(#clip-${label})`}>
+          <rect x="6" y={fillY} width={width - 12} height={fillH + 20} fill={`url(#grad-${label})`} />
+          <ellipse cx={width / 2} cy={fillY} rx={(width - 12) / 2} ry="4" fill={colorLight} opacity="0.8" />
+        </g>
+        {/* jar neck rim */}
+        <rect x="14" y="4" width={width - 28} height="8" rx="3" fill={C.parchmentLine} />
+      </svg>
+      <div className="text-center">
+        <div
+          style={{ fontFamily: "Fraunces, serif", fontWeight: 600, color: C.textInk, fontSize: "15px" }}
+        >
+          {label}
+        </div>
+        <div style={{ fontFamily: "Inter, sans-serif", color: C.textMuted, fontSize: "11px" }}>{sub}</div>
+        <div
+          style={{
+            fontFamily: "IBM Plex Mono, monospace",
+            color: color,
+            fontSize: "14px",
+            fontWeight: 600,
+            marginTop: "4px",
+          }}
+        >
+          {shortInr(amount)}
+        </div>
+        <div style={{ fontFamily: "Inter, sans-serif", color: C.textMuted, fontSize: "11px" }}>
+          {pct.toFixed(0)}% of corpus
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function RetirementLedger() {
+  const [inputs, setInputs] = useState({
+    currentAge: 30,
+    retirementAge: 60,
+    lifeExpectancy: 85,
+    expenseMode: "monthly", // 'monthly' | 'yearly'
+    expense: 50000,
+    preInflation: 7,
+    postInflation: 6,
+    preReturn: 12,
+    postReturn: 8,
+    bucket1Years: 3,
+    bucket2Years: 7,
+    bucket1Return: 6,
+    bucket2Return: 9,
+    bucket3Return: 12,
+  });
+
+  const set = (key) => (val) => setInputs((s) => ({ ...s, [key]: val }));
+
+  const calc = useMemo(() => {
+    const {
+      currentAge,
+      retirementAge,
+      lifeExpectancy,
+      expenseMode,
+      expense,
+      preInflation,
+      postInflation,
+      preReturn,
+      postReturn,
+      bucket1Years,
+      bucket2Years,
+      bucket1Return,
+      bucket2Return,
+      bucket3Return,
+    } = inputs;
+
+    const yearsToRetirement = Math.max(0, retirementAge - currentAge);
+    const retirementYears = Math.max(0, lifeExpectancy - retirementAge);
+    const annualExpenseToday = expenseMode === "monthly" ? expense * 12 : expense;
+
+    // Step 1: future value of expense at retirement (pre-retirement inflation)
+    const futureAnnualExpenseYear1 =
+      annualExpenseToday * Math.pow(1 + preInflation / 100, yearsToRetirement);
+
+    // Step 2: real rate of return post retirement
+    const realRate = (1 + postReturn / 100) / (1 + postInflation / 100) - 1;
+
+    // Step 3: corpus required — growing annuity-due discounted at the real rate
+    let corpus = 0;
+    if (retirementYears > 0) {
+      if (Math.abs(realRate) < 1e-9) {
+        corpus = futureAnnualExpenseYear1 * retirementYears;
+      } else {
+        corpus =
+          (futureAnnualExpenseYear1 * (1 - Math.pow(1 + realRate, -retirementYears))) /
+          realRate *
+          (1 + realRate);
+      }
+    }
+
+    // Step 4: SIP required (annuity-due, monthly compounding, pre-retirement return)
+    const monthlyReturn = Math.pow(1 + preReturn / 100, 1 / 12) - 1;
+    const months = yearsToRetirement * 12;
+    let sip = 0;
+    if (months > 0) {
+      if (Math.abs(monthlyReturn) < 1e-9) {
+        sip = corpus / months;
+      } else {
+        sip =
+          (corpus * monthlyReturn) /
+          ((Math.pow(1 + monthlyReturn, months) - 1) * (1 + monthlyReturn));
+      }
+    }
+
+    // Accumulation trajectory (year end corpus value while investing SIP)
+    const accumulation = [];
+    let bal = 0;
+    for (let m = 1; m <= months; m++) {
+      bal = (bal + sip) * (1 + monthlyReturn);
+      if (m % 12 === 0) {
+        accumulation.push({
+          age: currentAge + m / 12,
+          year: m / 12,
+          corpus: Math.round(bal),
+        });
+      }
+    }
+    if (months > 0 && months % 12 !== 0) {
+      accumulation.push({ age: retirementAge, year: yearsToRetirement, corpus: Math.round(bal) });
+    }
+
+    // Yearly expense path through retirement (grows with post-retirement inflation)
+    const expenses = [];
+    for (let y = 0; y < retirementYears; y++) {
+      expenses.push(futureAnnualExpenseYear1 * Math.pow(1 + postInflation / 100, y));
+    }
+
+    // Bucket split at retirement
+    const b1Years = Math.min(bucket1Years, retirementYears);
+    const b2Years = Math.min(bucket2Years, Math.max(0, retirementYears - b1Years));
+    const b3Years = Math.max(0, retirementYears - b1Years - b2Years);
+
+    let bucket1Target = 0;
+    for (let y = 0; y < b1Years; y++) {
+      bucket1Target += expenses[y] / Math.pow(1 + bucket1Return / 100, y);
+    }
+    let bucket2Target = 0;
+    for (let y = b1Years; y < b1Years + b2Years; y++) {
+      bucket2Target += expenses[y] / Math.pow(1 + bucket2Return / 100, y - b1Years);
+    }
+    let bucket3Target = Math.max(0, corpus - bucket1Target - bucket2Target);
+
+    // Year by year retirement simulation with rebalancing
+    let b1 = bucket1Target;
+    let b2 = bucket2Target;
+    let b3 = bucket3Target;
+    const rows = [];
+    for (let y = 0; y < retirementYears; y++) {
+      const age = retirementAge + y;
+      const exp = expenses[y];
+
+      // withdraw this year's expense from bucket 1 (pull from bucket 2 if short)
+      let shortfall = 0;
+      b1 -= exp;
+      if (b1 < 0) {
+        shortfall = -b1;
+        b1 = 0;
+        const pull = Math.min(shortfall, b2);
+        b2 -= pull;
+        shortfall -= pull;
+      }
+
+      // grow balances for the year
+      b1 *= 1 + bucket1Return / 100;
+      b2 *= 1 + bucket2Return / 100;
+      b3 *= 1 + bucket3Return / 100;
+
+      // rebalance: top bucket1 up to cover next b1Years of expense, bucket2 up to next b2Years
+      const nextExp = expenses[Math.min(y + 1, retirementYears - 1)] || exp;
+      const targetB1 = nextExp * b1Years;
+      const targetB2 = nextExp * b2Years;
+
+      let transferB2toB1 = Math.max(0, targetB1 - b1);
+      transferB2toB1 = Math.min(transferB2toB1, b2);
+      b1 += transferB2toB1;
+      b2 -= transferB2toB1;
+
+      let transferB3toB2 = Math.max(0, targetB2 - b2);
+      transferB3toB2 = Math.min(transferB3toB2, b3);
+      b2 += transferB3toB2;
+      b3 -= transferB3toB2;
+
+      rows.push({
+        year: y + 1,
+        age,
+        expense: exp,
+        withdrawShortfall: shortfall,
+        b1: Math.max(0, b1),
+        b2: Math.max(0, b2),
+        b3: Math.max(0, b3),
+        total: Math.max(0, b1) + Math.max(0, b2) + Math.max(0, b3),
+        transferB2toB1,
+        transferB3toB2,
+      });
+    }
+
+    const depleted = rows.find((r) => r.total <= 0 && r.withdrawShortfall > 0);
+
+    return {
+      yearsToRetirement,
+      retirementYears,
+      futureAnnualExpenseYear1,
+      futureMonthlyExpenseYear1: futureAnnualExpenseYear1 / 12,
+      realRate,
+      corpus,
+      sip,
+      accumulation,
+      bucket1Target,
+      bucket2Target,
+      bucket3Target,
+      b1Years,
+      b2Years,
+      b3Years,
+      rows,
+      depleted,
+    };
+  }, [inputs]);
+
+  const bucketTotal = calc.bucket1Target + calc.bucket2Target + calc.bucket3Target || 1;
+
+  return (
+    <div style={{ background: C.ink, minHeight: "100%", fontFamily: "Inter, sans-serif" }}>
+      <style>{fontImport}</style>
+
+      {/* Header / cover */}
+      <div
+        className="px-6 py-10 md:px-12"
+        style={{
+          background: `linear-gradient(160deg, ${C.ink} 0%, ${C.ink2} 100%)`,
+          borderBottom: `1px solid ${C.inkLine}`,
+        }}
+      >
+        <div className="max-w-5xl mx-auto">
+          <div className="flex items-center gap-2 mb-2">
+            <div style={{ width: 28, height: 2, background: C.brass }} />
+            <span
+              style={{
+                color: C.brass,
+                fontSize: "12px",
+                letterSpacing: "0.2em",
+                textTransform: "uppercase",
+                fontFamily: "Inter, sans-serif",
+              }}
+            >
+              A Retirement Passbook
+            </span>
+          </div>
+          <h1
+            style={{
+              fontFamily: "Fraunces, serif",
+              color: C.parchment,
+              fontSize: "clamp(28px, 4vw, 42px)",
+              fontWeight: 600,
+              lineHeight: 1.1,
+            }}
+          >
+            The Retirement Corpus Ledger
+          </h1>
+          <p style={{ color: C.textMuted, marginTop: "10px", maxWidth: "560px", fontSize: "14.5px" }}>
+            Enter today's expenses, your working years, and expected rates. The ledger
+            projects the corpus you'll need, splits it into three buckets, and works out
+            the monthly SIP that gets you there.
+          </p>
+        </div>
+      </div>
+
+      {/* Inputs */}
+      <div className="max-w-5xl mx-auto px-6 md:px-12 -mt-6">
+        <div
+          className="rounded-xl p-6 md:p-8 shadow-2xl"
+          style={{ background: C.parchment, border: `1px solid ${C.parchmentLine}` }}
+        >
+          <SectionLabel n="01" title="Your Timeline & Expenses" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <NumberField label="Current Age" value={inputs.currentAge} onChange={set("currentAge")} suffix="yrs" />
+            <NumberField
+              label="Retirement Age"
+              value={inputs.retirementAge}
+              onChange={set("retirementAge")}
+              suffix="yrs"
+            />
+            <NumberField
+              label="Life Expectancy"
+              value={inputs.lifeExpectancy}
+              onChange={set("lifeExpectancy")}
+              suffix="yrs"
+            />
+            <label className="flex flex-col gap-1">
+              <span
+                className="text-xs tracking-wide uppercase"
+                style={{ color: C.textMuted, letterSpacing: "0.06em" }}
+              >
+                Expense Frequency
+              </span>
+              <div className="flex rounded-md overflow-hidden border" style={{ borderColor: C.parchmentLine }}>
+                {["monthly", "yearly"].map((m) => (
+                  <button
+                    key={m}
+                    onClick={() => set("expenseMode")(m)}
+                    className="flex-1 py-2 text-sm capitalize"
+                    style={{
+                      background: inputs.expenseMode === m ? C.brass : "#fff",
+                      color: inputs.expenseMode === m ? "#fff" : C.textInk,
+                      fontFamily: "Inter, sans-serif",
+                    }}
+                  >
+                    {m}
+                  </button>
+                ))}
+              </div>
+            </label>
+            <NumberField
+              label={`Current ${inputs.expenseMode === "monthly" ? "Monthly" : "Yearly"} Expense`}
+              value={inputs.expense}
+              onChange={set("expense")}
+              suffix="₹"
+              step={1000}
+            />
+          </div>
+
+          <SectionLabel n="02" title="Inflation & Return Assumptions" />
+          <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-6">
+            <NumberField
+              label="Pre-Retirement Inflation"
+              value={inputs.preInflation}
+              onChange={set("preInflation")}
+              suffix="%"
+              step={0.5}
+              hint="Grows today's expense to retirement"
+            />
+            <NumberField
+              label="Post-Retirement Inflation"
+              value={inputs.postInflation}
+              onChange={set("postInflation")}
+              suffix="%"
+              step={0.5}
+              hint="Grows expenses during retirement"
+            />
+            <NumberField
+              label="Pre-Retirement Return"
+              value={inputs.preReturn}
+              onChange={set("preReturn")}
+              suffix="%"
+              step={0.5}
+              hint="Used to size the monthly SIP"
+            />
+            <NumberField
+              label="Post-Retirement Return"
+              value={inputs.postReturn}
+              onChange={set("postReturn")}
+              suffix="%"
+              step={0.5}
+              hint="Blended portfolio return, sets real rate"
+            />
+          </div>
+
+          <SectionLabel n="03" title="Three-Bucket Configuration" />
+          <div className="grid grid-cols-2 md:grid-cols-3 gap-4 mb-2">
+            <NumberField
+              label="Bucket 1 — Liquid, covers"
+              value={inputs.bucket1Years}
+              onChange={set("bucket1Years")}
+              suffix="yrs"
+            />
+            <NumberField
+              label="Bucket 1 Return"
+              value={inputs.bucket1Return}
+              onChange={set("bucket1Return")}
+              suffix="%"
+              step={0.5}
+            />
+            <div className="hidden md:block" />
+            <NumberField
+              label="Bucket 2 — Balanced, covers"
+              value={inputs.bucket2Years}
+              onChange={set("bucket2Years")}
+              suffix="yrs"
+            />
+            <NumberField
+              label="Bucket 2 Return"
+              value={inputs.bucket2Return}
+              onChange={set("bucket2Return")}
+              suffix="%"
+              step={0.5}
+            />
+            <div className="hidden md:block" />
+            <div className="flex flex-col justify-center">
+              <span className="text-xs uppercase" style={{ color: C.textMuted, letterSpacing: "0.06em" }}>
+                Bucket 3 — Growth, covers
+              </span>
+              <span
+                style={{ fontFamily: "IBM Plex Mono, monospace", color: C.textInk, fontSize: "15px", marginTop: "4px" }}
+              >
+                {calc.b3Years} yrs (remainder)
+              </span>
+            </div>
+            <NumberField
+              label="Bucket 3 Return"
+              value={inputs.bucket3Return}
+              onChange={set("bucket3Return")}
+              suffix="%"
+              step={0.5}
+            />
+          </div>
+          <div className="flex items-start gap-2 mt-3" style={{ color: C.textMuted, fontSize: "12px" }}>
+            <Info size={14} style={{ marginTop: "2px", flexShrink: 0 }} />
+            <span>
+              Bucket 1 holds cash/liquid funds for near-term withdrawals, Bucket 2 sits in
+              balanced/debt-oriented funds, and Bucket 3 stays in equity for long-term growth,
+              refilling the other two each year.
+            </span>
+          </div>
+        </div>
+      </div>
+
+      {/* Results statement */}
+      <div className="max-w-5xl mx-auto px-6 md:px-12 mt-8">
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <StatCard
+            icon={Landmark}
+            label="Corpus Required at Retirement"
+            value={inr(calc.corpus)}
+            note={`${shortInr(calc.corpus)} · in ${calc.yearsToRetirement} yrs`}
+            color={C.brass}
+          />
+          <StatCard
+            icon={TrendingUp}
+            label="Future Monthly Expense (Year 1 of retirement)"
+            value={inr(calc.futureMonthlyExpenseYear1)}
+            note={`Real rate of return: ${(calc.realRate * 100).toFixed(2)}%`}
+            color={C.teal}
+          />
+          <StatCard
+            icon={PiggyBank}
+            label="Monthly SIP Required"
+            value={inr(calc.sip)}
+            note={`For ${calc.yearsToRetirement} yrs @ ${inputs.preReturn}% return`}
+            color={C.rust}
+            highlight
+          />
+        </div>
+      </div>
+
+      {/* Bucket jars */}
+      <div className="max-w-5xl mx-auto px-6 md:px-12 mt-10">
+        <div
+          className="rounded-xl p-6 md:p-8"
+          style={{ background: C.ink2, border: `1px solid ${C.inkLine}` }}
+        >
+          <div className="flex items-baseline gap-3 mb-6">
+            <span style={{ fontFamily: "Fraunces, serif", color: C.brass, fontSize: "13px", letterSpacing: "0.1em" }}>
+              04
+            </span>
+            <h3 style={{ fontFamily: "Fraunces, serif", color: C.parchment, fontSize: "18px", fontWeight: 600 }}>
+              The Three Buckets, at Retirement
+            </h3>
+            <div className="flex-1" style={{ borderBottom: `1px solid ${C.inkLine}` }} />
+          </div>
+          <div className="flex justify-center gap-10 md:gap-16 flex-wrap">
+            <Jar
+              label="Bucket 1"
+              sub={`Liquid · ${calc.b1Years} yrs`}
+              amount={calc.bucket1Target}
+              pct={(calc.bucket1Target / bucketTotal) * 100}
+              color={C.rust}
+              colorLight={C.rustLight}
+            />
+            <Jar
+              label="Bucket 2"
+              sub={`Balanced · ${calc.b2Years} yrs`}
+              amount={calc.bucket2Target}
+              pct={(calc.bucket2Target / bucketTotal) * 100}
+              color={C.slate}
+              colorLight={C.slateLight}
+            />
+            <Jar
+              label="Bucket 3"
+              sub={`Growth · ${calc.b3Years} yrs`}
+              amount={calc.bucket3Target}
+              pct={(calc.bucket3Target / bucketTotal) * 100}
+              color={C.teal}
+              colorLight={C.tealLight}
+            />
+          </div>
+        </div>
+      </div>
+
+      {/* Charts */}
+      <div className="max-w-5xl mx-auto px-6 md:px-12 mt-8 grid grid-cols-1 md:grid-cols-2 gap-4">
+        <ChartPanel title="05 — SIP Accumulation" subtitle="Corpus building up during working years">
+          <ResponsiveContainer width="100%" height={220}>
+            <AreaChart data={calc.accumulation}>
+              <defs>
+                <linearGradient id="sipGrad" x1="0" y1="0" x2="0" y2="1">
+                  <stop offset="0%" stopColor={C.brass} stopOpacity={0.6} />
+                  <stop offset="100%" stopColor={C.brass} stopOpacity={0.05} />
+                </linearGradient>
+              </defs>
+              <CartesianGrid stroke={C.inkLine} strokeDasharray="3 3" />
+              <XAxis dataKey="age" stroke={C.textMuted} fontSize={11} tickFormatter={(v) => `${v}`} />
+              <YAxis stroke={C.textMuted} fontSize={11} tickFormatter={(v) => shortInr(v)} width={60} />
+              <Tooltip
+                formatter={(v) => inr(v)}
+                labelFormatter={(v) => `Age ${v}`}
+                contentStyle={{ background: C.ink2, border: `1px solid ${C.inkLine}`, borderRadius: 8 }}
+                labelStyle={{ color: C.parchment }}
+              />
+              <Area type="monotone" dataKey="corpus" stroke={C.brass} fill="url(#sipGrad)" strokeWidth={2} />
+            </AreaChart>
+          </ResponsiveContainer>
+        </ChartPanel>
+
+        <ChartPanel title="06 — Bucket Balances" subtitle="Simulated draw-down through retirement">
+          <ResponsiveContainer width="100%" height={220}>
+            <BarChart data={calc.rows}>
+              <CartesianGrid stroke={C.inkLine} strokeDasharray="3 3" />
+              <XAxis dataKey="age" stroke={C.textMuted} fontSize={11} />
+              <YAxis stroke={C.textMuted} fontSize={11} tickFormatter={(v) => shortInr(v)} width={60} />
+              <Tooltip
+                formatter={(v) => inr(v)}
+                labelFormatter={(v) => `Age ${v}`}
+                contentStyle={{ background: C.ink2, border: `1px solid ${C.inkLine}`, borderRadius: 8 }}
+                labelStyle={{ color: C.parchment }}
+              />
+              <Legend wrapperStyle={{ fontSize: "11px", color: C.textMuted }} />
+              <Bar dataKey="b1" stackId="a" name="Bucket 1" fill={C.rust} />
+              <Bar dataKey="b2" stackId="a" name="Bucket 2" fill={C.slate} />
+              <Bar dataKey="b3" stackId="a" name="Bucket 3" fill={C.teal} />
+            </BarChart>
+          </ResponsiveContainer>
+        </ChartPanel>
+      </div>
+
+      {calc.depleted && (
+        <div className="max-w-5xl mx-auto px-6 md:px-12 mt-4">
+          <div
+            className="rounded-lg px-4 py-3 text-sm"
+            style={{ background: "#3A2320", border: `1px solid ${C.rust}`, color: C.rustLight }}
+          >
+            At the current assumptions, all three buckets are projected to run dry around age{" "}
+            {calc.depleted.age} — before life expectancy of {inputs.lifeExpectancy}. Consider a
+            higher SIP, later retirement, or higher bucket returns.
+          </div>
+        </div>
+      )}
+
+      {/* Rebalancing ledger table */}
+      <div className="max-w-5xl mx-auto px-6 md:px-12 mt-8 mb-12">
+        <div
+          className="rounded-xl p-6 md:p-8"
+          style={{ background: C.parchment, border: `1px solid ${C.parchmentLine}` }}
+        >
+          <SectionLabel n="07" title="Year-by-Year Rebalancing" />
+          <div className="flex items-center gap-2 mb-4" style={{ color: C.textMuted, fontSize: "12px" }}>
+            <ArrowRightLeft size={13} />
+            <span>
+              Each year: withdraw from Bucket 1, grow all three buckets, then top up Bucket 1
+              from Bucket 2 and Bucket 2 from Bucket 3 to restore their target coverage.
+            </span>
+          </div>
+          <div className="overflow-x-auto" style={{ maxHeight: "420px", overflowY: "auto" }}>
+            <table className="w-full text-sm" style={{ borderCollapse: "collapse", fontFamily: "IBM Plex Mono, monospace" }}>
+              <thead>
+                <tr style={{ position: "sticky", top: 0, background: C.parchment2 }}>
+                  {["Year", "Age", "Expense", "Bucket 1", "Bucket 2", "Bucket 3", "Total", "B2→B1", "B3→B2"].map(
+                    (h) => (
+                      <th
+                        key={h}
+                        className="text-right px-3 py-2"
+                        style={{
+                          color: C.textInk,
+                          fontFamily: "Inter, sans-serif",
+                          fontSize: "11px",
+                          textTransform: "uppercase",
+                          letterSpacing: "0.04em",
+                          borderBottom: `2px solid ${C.parchmentLine}`,
+                        }}
+                      >
+                        {h}
+                      </th>
+                    )
+                  )}
+                </tr>
+              </thead>
+              <tbody>
+                {calc.rows.map((r, i) => (
+                  <tr
+                    key={r.year}
+                    style={{
+                      background: i % 2 === 0 ? "#fff" : C.parchment2,
+                      borderBottom: `1px solid ${C.parchmentLine}`,
+                    }}
+                  >
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.textMuted }}>
+                      {r.year}
+                    </td>
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.textMuted }}>
+                      {r.age}
+                    </td>
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.textInk }}>
+                      {shortInr(r.expense)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.rust }}>
+                      {shortInr(r.b1)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.slate }}>
+                      {shortInr(r.b2)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.teal }}>
+                      {shortInr(r.b3)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.textInk, fontWeight: 600 }}>
+                      {shortInr(r.total)}
+                    </td>
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.textMuted }}>
+                      {r.transferB2toB1 > 1 ? shortInr(r.transferB2toB1) : "—"}
+                    </td>
+                    <td className="px-3 py-1.5 text-right" style={{ color: C.textMuted }}>
+                      {r.transferB3toB2 > 1 ? shortInr(r.transferB3toB2) : "—"}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+
+      <div className="text-center pb-8" style={{ color: C.textMuted, fontSize: "11px" }}>
+        Illustrative planning tool — not investment advice. Actual returns and inflation will vary.
+      </div>
+    </div>
+  );
+}
+
+function StatCard({ icon: Icon, label, value, note, color, highlight }) {
+  return (
+    <div
+      className="rounded-xl p-5"
+      style={{
+        background: highlight ? C.ink3 : C.ink2,
+        border: `1px solid ${highlight ? C.brass : C.inkLine}`,
+      }}
+    >
+      <div className="flex items-center gap-2 mb-3">
+        <div
+          className="rounded-full p-1.5 flex items-center justify-center"
+          style={{ background: `${color}22` }}
+        >
+          <Icon size={15} color={color} />
+        </div>
+        <span style={{ color: C.textMuted, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          {label}
+        </span>
+      </div>
+      <div style={{ fontFamily: "Fraunces, serif", color: C.parchment, fontSize: "24px", fontWeight: 600 }}>
+        {value}
+      </div>
+      <div style={{ color: C.textMuted, fontSize: "12px", marginTop: "4px", fontFamily: "IBM Plex Mono, monospace" }}>
+        {note}
+      </div>
+    </div>
+  );
+}
+
+function ChartPanel({ title, subtitle, children }) {
+  return (
+    <div className="rounded-xl p-5" style={{ background: C.ink2, border: `1px solid ${C.inkLine}` }}>
+      <div style={{ fontFamily: "Fraunces, serif", color: C.brass, fontSize: "12px", letterSpacing: "0.08em" }}>
+        {title}
+      </div>
+      <div style={{ color: C.textMuted, fontSize: "12px", marginBottom: "8px" }}>{subtitle}</div>
+      {children}
+    </div>
+  );
+}
